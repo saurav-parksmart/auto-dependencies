@@ -13,6 +13,30 @@ function ignoreMissing(dependency, optional, peerDependenciesMeta) {
     || peerDependenciesMeta && dependency in peerDependenciesMeta && peerDependenciesMeta[dependency].optional;
 }
 
+function loadModuleAliases(servicePath) {
+  try {
+    const pkg = readPkgUp.sync({ cwd: servicePath });
+    if (pkg && pkg.packageJson && pkg.packageJson._moduleAliases) {
+      return Object.entries(pkg.packageJson._moduleAliases).reduce((aliases, [alias, target]) => {
+        aliases[alias] = path.resolve(servicePath, target);
+        return aliases;
+      }, {});
+    }
+  } catch (e) {
+    // Silently fail if no aliases are found
+  }
+  return {};
+}
+
+function resolveAlias(name, aliases) {
+  const alias = Object.keys(aliases).find(key => name.startsWith(key));
+  if (alias) {
+    const resolvedPath = path.join(aliases[alias], name.slice(alias.length));
+    return resolvedPath;
+  }
+  return null;
+}
+
 module.exports = function(filename, serverless, cache) {
   const servicePath = serverless.config.servicePath;
   const modulePaths = new Set();
@@ -49,6 +73,18 @@ module.exports = function(filename, serverless, cache) {
         }
         try {
           // this resolves the requested import also against any set up NODE_PATH extensions, etc.
+          
+          const aliases = loadModuleAliases(servicePath);
+          const aliasResolvedPath = resolveAlias(name, aliases);
+          if (aliasResolvedPath) {
+            if (!filePaths.has(aliasResolvedPath)) {
+              localFilesToProcess.push(aliasResolvedPath);
+              filePaths.add(aliasResolvedPath);
+            }
+            if (cache) cache.add(cacheKey);
+            return;
+          }
+          
           const resolved = require.resolve(name);
           localFilesToProcess.push(resolved);
 
